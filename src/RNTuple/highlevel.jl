@@ -10,24 +10,24 @@ backed with file IO source and a schema field from `RNTuple.schema`.
 - 'O' is the type of output when you read a cluster-worth of data
 - 'E' is the element type of `O` (i.e. what you get for each event (row) in iteration)
 """
-struct RNTupleField{R, F, O, E} <: AbstractVector{E}
+struct RNTupleField{R,F,O,E} <: AbstractVector{E}
     rn::R
     field::F
     buffers::Vector{O}
     thread_locks::Vector{ReentrantLock}
     buffer_ranges::Vector{UnitRange{Int64}}
-    function RNTupleField(rn::R, field::F) where {R, F}
+    function RNTupleField(rn::R, field::F) where {R,F}
         O = _field_output_type(F)
         E = eltype(O)
         Nthreads = _maxthreadid()
         buffers = Vector{O}(undef, Nthreads)
         thread_locks = [ReentrantLock() for _ in 1:Nthreads]
         buffer_ranges = [0:-1 for _ in 1:Nthreads]
-        new{R, F, O, E}(rn, field, buffers, thread_locks, buffer_ranges)
+        new{R,F,O,E}(rn, field, buffers, thread_locks, buffer_ranges)
     end
 end
 Base.length(rf::RNTupleField) = _length(rf.rn)
-Base.size(rf::RNTupleField) = (length(rf), )
+Base.size(rf::RNTupleField) = (length(rf),)
 Base.IndexStyle(::RNTupleField) = IndexLinear()
 
 # this is used for Table.partition()
@@ -96,7 +96,7 @@ end
 function Base.getindex(rf::RNTupleField, idx::Int)
     tid = Threads.threadid()
     tlock = @inbounds rf.thread_locks[tid]
-    Base.@lock tlock begin 
+    Base.@lock tlock begin
         br = @inbounds rf.buffer_ranges[tid]
         localidx = if idx ∉ br
             _localindex_newcluster!(rf, idx, tid)
@@ -110,25 +110,29 @@ end
 function _read_page_list(rn, nth=1)
     get!(rn.pagelinks, nth) do
         #TODO add multiple cluster group support
-        bytes = _read_envlink(rn.io, rn.footer.cluster_group_records[nth].page_list_link);
+        bytes = _read_envlink(rn.io, rn.footer.cluster_group_records[nth].page_list_link)
         _rntuple_read(IOBuffer(bytes), RNTupleEnvelope{PageLink}).payload
     end
 end
 
 function _localindex_newcluster!(rf::RNTupleField, idx::Int, tid::Int)
-    page_list =_read_page_list(rf.rn, 1)
-    cluster_summaries, nested_page_locations = page_list.cluster_summaries, page_list.nested_page_locations
+    for nth in eachindex(rf.rn.footer.cluster_group_records)
+        page_list = _read_page_list(rf.rn, nth)
+        cluster_summaries = page_list.cluster_summaries
+        nested_page_locations = page_list.nested_page_locations
 
-    for (cluster_idx, cluster) in enumerate(cluster_summaries)
-        first_entry = cluster.first_entry_number 
-        n_entries = cluster.number_of_entries
-        if first_entry + n_entries >= idx
-            br = first_entry+1:(first_entry+n_entries)
-            @inbounds rf.buffers[tid] = read_field(rf.rn.io, rf.field, nested_page_locations[cluster_idx])
-            @inbounds rf.buffer_ranges[tid] = br
-            return idx - br.start + 1
+        for (cluster_idx, cluster) in enumerate(cluster_summaries)
+            first_entry = cluster.first_entry_number
+            n_entries = cluster.number_of_entries
+            if first_entry < idx <= first_entry + n_entries
+                br = first_entry+1:(first_entry+n_entries)
+                @inbounds rf.buffers[tid] = read_field(rf.rn.io, rf.field, nested_page_locations[cluster_idx])
+                @inbounds rf.buffer_ranges[tid] = br
+                return idx - br.start + 1
+            end
         end
     end
+
     error("$idx-th event not found in cluster summaries")
 end
 
@@ -177,7 +181,7 @@ struct RNTuple{O}
     anchor::ROOT_3a3a_RNTuple
     header::RNTupleHeader
     footer::RNTupleFooter
-    pagelinks::Dict{Int, PageLink}
+    pagelinks::Dict{Int,PageLink}
     schema::RNTupleSchema
     function RNTuple(io::O, anchor, header, footer, schema) where {O}
         new{O}(
@@ -185,7 +189,7 @@ struct RNTuple{O}
             anchor,
             header,
             footer,
-            Dict{Int, PageLink}(),
+            Dict{Int,PageLink}(),
             RNTupleSchema(schema),
         )
     end
@@ -203,7 +207,7 @@ function Base.keys(rn::RNTuple)
     String.(propertynames(rn.schema))
 end
 
-LazyTree(rn::RNTuple, selection::Union{AbstractString, Regex}) = LazyTree(rn, [selection])
+LazyTree(rn::RNTuple, selection::Union{AbstractString,Regex}) = LazyTree(rn, [selection])
 function LazyTree(rn::RNTuple, selection)
     field_names = keys(rn)
     _m(r::Regex) = Base.Fix1(occursin, r)
@@ -219,7 +223,7 @@ function LazyTree(rn::RNTuple, selection)
 
     N = Tuple(Symbol.(filtered_names))
     skim_schema = getfield(rn.schema, :namedtuple)[N]
-    new_rn =  RNTuple(rn.io, rn.anchor, rn.header, rn.footer, skim_schema)
+    new_rn = RNTuple(rn.io, rn.anchor, rn.header, rn.footer, skim_schema)
     T = Tuple(RNTupleField(new_rn, getproperty(new_rn.schema, k)) for k in N)
 
     return LazyTree(NamedTuple{N}(T))

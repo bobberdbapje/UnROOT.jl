@@ -25,19 +25,19 @@ function read_field() end
 
 _field_output_type(x::T) where T = _field_output_type(T)
 
-function _field_output_type(::Type{StdArrayField{N, T}}) where {N, T} 
+function _field_output_type(::Type{StdArrayField{N,T}}) where {N,T}
     content_type = _field_output_type(T)
     elT = eltype(content_type)
-    return Base.ReinterpretArray{SVector{N, elT}, 1, elT, content_type, false}
+    return Base.ReinterpretArray{SVector{N,elT},1,elT,content_type,false}
 end
-function read_field(io, field::StdArrayField{N, T}, page_list) where {N, T}
+function read_field(io, field::StdArrayField{N,T}, page_list) where {N,T}
     content = read_field(io, field.content_col, page_list)
-    res = reinterpret(SVector{N, eltype(content)}, content)
+    res = reinterpret(SVector{N,eltype(content)}, content)
     return res::_field_output_type(field)
 end
 
-_field_output_type(::Type{StringField{O, T}}) where {O, T} = Vector{String}
-function read_field(io, field::StringField{O, T}, page_list) where {O, T}
+_field_output_type(::Type{StringField{O,T}}) where {O,T} = Vector{String}
+function read_field(io, field::StringField{O,T}, page_list) where {O,T}
     cr = field.content_col.columnrecord
     pages = page_list[field.content_col.content_col_idx]
 
@@ -50,16 +50,16 @@ function read_field(io, field::StringField{O, T}, page_list) where {O, T}
     return res::_field_output_type(field)
 end
 
-const T_Reinter{T} = Base.ReinterpretArray{T, 1, UInt8, Vector{UInt8}, false}
+const T_Reinter{T} = Base.ReinterpretArray{T,1,UInt8,Vector{UInt8},false}
 
 struct CardinalityVector{T} <: AbstractVector{T}
     contents::T_Reinter{T}
 end
 Base.length(ary::CardinalityVector) = length(ary.contents)
-Base.size(ary::CardinalityVector) = (length(ary.contents), )
+Base.size(ary::CardinalityVector) = (length(ary.contents),)
 Base.IndexStyle(::CardinalityVector) = IndexLinear()
 function Base.getindex(ary::CardinalityVector{T}, i::Int) where {T}
-    ary.contents[i] - get(ary.contents, i-1, zero(T))
+    ary.contents[i] - get(ary.contents, i - 1, zero(T))
 end
 
 
@@ -119,8 +119,8 @@ function read_field(io, field::LeafField{Bool}, page_list)
     return res::_field_output_type(field)
 end
 
-_field_output_type(::Type{VectorField{O, T}}) where {O, T} = VectorOfVectors{eltype(_field_output_type(T)), _field_output_type(T), Vector{eltype(O)}, Vector{Tuple{}}}
-function read_field(io, field::VectorField{O, T}, page_list) where {O, T}
+_field_output_type(::Type{VectorField{O,T}}) where {O,T} = VectorOfVectors{eltype(_field_output_type(T)),_field_output_type(T),Vector{eltype(O)},Vector{Tuple{}}}
+function read_field(io, field::VectorField{O,T}, page_list) where {O,T}
     offset = read_field(io, field.offset_col, page_list)
     content = read_field(io, field.content_col, page_list)
     o = one(eltype(offset))
@@ -130,10 +130,10 @@ function read_field(io, field::VectorField{O, T}, page_list) where {O, T}
     return res::_field_output_type(field)
 end
 
-function _field_output_type(::Type{StructField{N, T}}) where {N, T}
+function _field_output_type(::Type{StructField{N,T}}) where {N,T}
     types = Tuple{eltype.(_field_output_type.(T.types))...}
     types2 = Tuple{_field_output_type.(T.types)...}
-    StructArray{NamedTuple{N, types}, 1, NamedTuple{N, types2}, Int64}
+    StructArray{NamedTuple{N,types},1,NamedTuple{N,types2},Int64}
 end
 
 """
@@ -142,23 +142,23 @@ end
 Since each field of the struct is stored in a separate field of the RNTuple,
 this function returns a `StructArray` to maximize efficiency.
 """
-function read_field(io, field::StructField{N, T}, page_list) where {N, T}
+function read_field(io, field::StructField{N,T}, page_list) where {N,T}
     contents = (read_field(io, col, page_list) for col in field.content_cols)
     res = StructArray(NamedTuple{N}(contents))
     return res::_field_output_type(field)
 end
 
-struct UnionVector{T, N} <: AbstractVector{T}
+struct UnionVector{T,N} <: AbstractVector{T}
     kindex::Vector{UInt64}
     tag::Vector{Int32}
     contents::N
     function UnionVector(kindex, tag, contents::N) where N
         T = Union{eltype.(contents)...}
-        return new{T, N}(kindex, tag, contents)
+        return new{T,N}(kindex, tag, contents)
     end
 end
 Base.length(ary::UnionVector) = length(ary.tag)
-Base.size(ary::UnionVector) = (length(ary.tag), )
+Base.size(ary::UnionVector) = (length(ary.tag),)
 Base.IndexStyle(::UnionVector) = IndexLinear()
 function Base.getindex(ary::UnionVector, i::Int)
     ith_ele = ary.kindex[i]
@@ -171,11 +171,11 @@ function _split_switch_bits(content)
     tags = Int32.(content .>> 64)
     return kindex, tags
 end
-function _field_output_type(::Type{UnionField{S, T}}) where {S, T}
+function _field_output_type(::Type{UnionField{S,T}}) where {S,T}
     types = _field_output_type.(T.types)
-    return UnionVector{Union{eltype.(types)...}, Tuple{types...}}
+    return UnionVector{Union{eltype.(types)...},Tuple{types...}}
 end
-function read_field(io, field::UnionField{S, T}, page_list) where {S, T}
+function read_field(io, field::UnionField{S,T}, page_list) where {S,T}
     switch = read_field(io, field.switch_col, page_list)
     content = Tuple(read_field(io, col, page_list) for col in field.content_cols)
     res = UnionVector(_split_switch_bits(switch)..., content)
@@ -187,7 +187,7 @@ function _detect_encoding(typenum)
     split = col_type.issplit
     zigzag = col_type.iszigzag
     delta = col_type.isdelta
-    return (;split, zigzag, delta)
+    return (; split, zigzag, delta)
 end
 
 """
@@ -202,13 +202,11 @@ column since `pagedesc` only contains `num_elements` information.
 """
 function read_pagedesc(io, pagedescs::AbstractVector{PageDescription}, cr::ColumnRecord)
     nbits = cr.nbits
-    (;split, zigzag, delta) = _detect_encoding(cr.type)
-    list_num_elements = [-p.num_elements for p in pagedescs]
+    (; split, zigzag, delta) = _detect_encoding(cr.type)
+    # temporary patch for pagesum error; should be replaced when official fix is out
+    list_num_elements = [abs(p.num_elements) for p in pagedescs]
     total_num_elements = sum(list_num_elements)
-    if any(<(0), total_num_elements)
-        error("Page checksum not implemented")
-    end
-    output_L = div(total_num_elements*nbits, 8, RoundUp)
+    output_L = div(total_num_elements * nbits, 8, RoundUp)
     res = Vector{UInt8}(undef, output_L)
 
     # a page max size is 64KB
